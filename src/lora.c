@@ -25,6 +25,12 @@
 #define REG_FRF_MID                    0x07
 #define REG_FRF_LSB                    0x08
 #define REG_PA_CONFIG                  0x09
+#define PA_SELECT                             0x80
+#define MAX_POWER                             0x70
+#define OUTPUT_POWER                          0x0f
+#define REG_4D_PA_DAC                              0x4d
+#define PA_DAC_DISABLE                        0x04
+
 #define REG_LNA                        0x0c
 #define REG_FIFO_ADDR_PTR              0x0d
 #define REG_FIFO_TX_BASE_ADDR          0x0e
@@ -241,14 +247,52 @@ lora_receive(void)
  * @param level 2-17, from least to most power
  */
 void 
-lora_set_tx_power(int level)
+lora_set_tx_power(int power,int useRFO)
 {
-   // RF9x module uses PA_BOOST pin
-   if (level < 2) level = 2;
-   else if (level > 17) level = 17;
-   lock();
-   lora_write_reg(REG_PA_CONFIG, PA_BOOST | (level - 2));
-   unlock();
+
+
+if (useRFO)
+    {
+	if (power > 14)
+	    power = 14;
+	if (power < -1)
+	    power = -1;
+	lock();
+	lora_write_reg(REG_PA_CONFIG, MAX_POWER | (power + 1));
+    	unlock();
+     }
+    else
+    {
+	if (power > 23)
+	    power = 23;
+	if (power < 5)
+	    power = 5;
+
+	// For RH_RF95_PA_DAC_ENABLE, manual says '+20dBm on PA_BOOST when OutputPower=0xf'
+	// RH_RF95_PA_DAC_ENABLE actually adds about 3dBm to all power levels. We will us it
+	// for 21, 22 and 23dBm
+	if (power > 20)
+	{
+	    ///spiWrite(RH_RF95_REG_4D_PA_DAC, RH_RF95_PA_DAC_ENABLE);
+	    //power -= 3;
+	}
+	else
+	{
+	    lock();
+	    lora_write_reg(REG_4D_PA_DAC, PA_DAC_DISABLE);
+	    unlock();
+	}
+
+	// RFM95/96/97/98 does not have RFO pins connected to anything. Only PA_BOOST
+	// pin is connected, so must use PA_BOOST
+	// Pout = 2 + OutputPower.
+	// The documentation is pretty confusing on this topic: PaSelect says the max power is 20dBm,
+	// but OutputPower claims it would be 17dBm.
+	// My measurements show 20dBm is correct
+	lock();
+	lora_write_reg(REG_PA_CONFIG, PA_SELECT | (power-5));
+	unlock();
+    }
 }
 
 /**
@@ -433,15 +477,25 @@ lora_init(void)
     * Default configuration.
     */
    lora_sleep();
- 
+
    lock();
+   if (lora_read_reg(REG_OP_MODE)!= MODE_LONG_RANGE_MODE | MODE_SLEEP){
+	unlock();
+	return -1;	
+}
+   
    lora_write_reg(REG_FIFO_RX_BASE_ADDR, 0);
    lora_write_reg(REG_FIFO_TX_BASE_ADDR, 0);
-   lora_write_reg(REG_LNA, lora_read_reg(REG_LNA) | 0x03);
-   lora_write_reg(REG_MODEM_CONFIG_3, 0x04);
+//Seteo ancho de banda    0x48,   0x94,    0x00
+lora_write_reg(0x1D,0x48);
+lora_write_reg(0x1E,0x94);
+lora_write_reg(0x26,0x00);
+   //lora_write_reg(REG_LNA, lora_read_reg(REG_LNA) | 0x03);
+  // lora_write_reg(REG_MODEM_CONFIG_3, 0x04);
    unlock();
  
-   lora_set_tx_power(17);
+   lora_set_preamble_length(8);
+   lora_set_tx_power(13,0);
 
    lora_idle();
    return 1;
@@ -463,6 +517,7 @@ lora_send_packet(uint8_t *buf, int size)
    lock();
    lora_write_reg(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_STDBY);
    lora_write_reg(REG_FIFO_ADDR_PTR, 0);
+
 
    for(i=0; i<size; i++) 
       lora_write_reg(REG_FIFO, *buf++);
