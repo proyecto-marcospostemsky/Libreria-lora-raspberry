@@ -1,4 +1,6 @@
 # PyLora
+## Agregar descripción de los cambios realizados respecto a la librería original.
+
 ## What is it
 **PyLora** is a Python extension module for sending and receiving data through a LoRa transceiver based on Semtech's SX127_ ICs.
 
